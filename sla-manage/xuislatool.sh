@@ -315,6 +315,12 @@ try:
                  print(f"{C.BOX}│{C.NC} ERR {C.BOX}│{C.NC} {C.RED}Error in row: {str(row_e)}{C.NC}")
 
         print(f"{C.BOX}└{'─'*W_ID}┴{'─'*W_EMAIL}┴{'─'*W_STAT}┴{'─'*W_TRAF}┴{'─'*W_DATE}┘{C.NC}")
+        
+        # --- RESTART X-UI HERE ---
+        print(f"\n{C.PURPLE}🔄 Restarting X-UI Panel...{C.NC}")
+        os.system("x-ui restart")
+        # ------------------------
+
         print(f"\n{C.YELLOW}📄 Log saved to: {C.WHITE}{log_file}{C.NC}")
 
 except Exception as e:
