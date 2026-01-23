@@ -100,6 +100,7 @@ import json
 import os
 import time
 import datetime
+import traceback
 
 # --- Python Colors ---
 class C:
@@ -111,6 +112,9 @@ class C:
     WHITE = '\033[1;37m'
     NC = '\033[0m'
     BOX = '\033[0;36m' 
+
+# --- ERROR TRACKING ---
+current_processing_user = "Startup"
 
 def gregorian_to_jalali(gy, gm, gd):
     g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
@@ -147,7 +151,6 @@ def timestamp_to_jalali(ts):
 db_path = os.environ.get('DB_PATH')
 log_file = os.environ.get('LOG_FILE')
 
-# Fix for NoneType error: Provide default empty string if None
 days_input = os.environ.get('INPUT_DAYS', '1').strip()
 traffic_input = os.environ.get('INPUT_TRAFFIC', '0').strip()
 user_filter = os.environ.get('INPUT_FILTER', '').strip()
@@ -194,13 +197,21 @@ try:
         modified_inbound = False
         
         for client in clients:
-            email = client.get('email', '')
+            email = client.get('email', 'NO_EMAIL_FOUND')
+            current_processing_user = email
+            
             if user_filter and (user_filter.lower() not in email.lower()):
                 continue
-                
-            old_traffic = client.get('totalGB', 0)
-            old_expiry = client.get('expiryTime', 0)
             
+            # --- CRITICAL FIX: FORCE CAST TO FLOAT ---
+            # Data from DB might be string, we force it to number before math
+            try: old_traffic = float(client.get('totalGB', 0))
+            except: old_traffic = 0.0
+            
+            try: old_expiry = float(client.get('expiryTime', 0))
+            except: old_expiry = 0.0
+            # ------------------------------------------
+
             # Update Traffic
             new_traffic = old_traffic
             if traffic_val != 0:
@@ -216,8 +227,8 @@ try:
             new_expiry = old_expiry
             if days_val != 0:
                 if old_expiry == 0:
-                     if not is_days_percent:
-                         new_expiry = current_time_ms + (days_val * 86400000)
+                      if not is_days_percent:
+                          new_expiry = current_time_ms + (days_val * 86400000)
                 else:
                     if is_days_percent:
                         duration = old_expiry - current_time_ms
@@ -253,15 +264,14 @@ try:
                 f.write(f"{idx:03d} | {u['email']:<20} | ✅ | {u['o_tf']}G->{u['n_tf']}G | {u['o_date_j']}->{u['n_date_j']} | {u['o_date_g']}->{u['n_date_g']}\n")
                 idx += 1
         
-        # Terminal Report - STRICT ALIGNMENT
+        # Terminal Report
         print(f"\n{C.GREEN}✔ Update Successful!{C.NC}\n")
         
-        # --- FIXED COLUMN WIDTHS (INCREASED) ---
         W_ID = 4
         W_EMAIL = 16 
         W_STAT = 8
-        W_TRAF = 25  # Wide enough for traffic
-        W_DATE = 35  # Wide enough for dates
+        W_TRAF = 25
+        W_DATE = 35
 
         # Print Header
         print(f"{C.BOX}┌{'─'*W_ID}┬{'─'*W_EMAIL}┬{'─'*W_STAT}┬{'─'*W_TRAF}┬{'─'*W_DATE}┐{C.NC}")
@@ -270,42 +280,49 @@ try:
         
         idx = 1
         for u in updated_users_log:
-            # Prepare Colors
-            tf_color = C.YELLOW if u['n_tf'] > u['o_tf'] else C.CYAN
-            
-            # --- TRUNCATE EMAIL LOGIC ---
-            email_full = u['email']
-            if len(email_full) > 14:
-                email_display = email_full[:13] + "."
-            else:
-                email_display = email_full
+            current_processing_user = f"Printing Log: {u['email']}"
+            try:
+                # Prepare Colors
+                tf_color = C.YELLOW if u['n_tf'] > u['o_tf'] else C.CYAN
+                
+                # Truncate Email
+                email_full = str(u['email'])
+                if len(email_full) > 14:
+                    email_display = email_full[:13] + "."
+                else:
+                    email_display = email_full
 
-            # --- Traffic Column Formatting ---
-            tf_raw = f"{u['o_tf']}→{u['n_tf']}"
-            
-            # Padding: Width - 3 (margin+indent) - length
-            pad_len_tf = W_TRAF - 3 - len(tf_raw)
-            if pad_len_tf < 0: pad_len_tf = 0
-            
-            tf_str = f" {C.RED}{u['o_tf']}{C.NC}→{tf_color}{u['n_tf']}{C.NC}" + (" " * pad_len_tf)
+                # Formatting without concatenation using +
+                tf_raw = f"{u['o_tf']}→{u['n_tf']}"
+                pad_len_tf = int(W_TRAF - 3 - len(tf_raw))
+                if pad_len_tf < 0: pad_len_tf = 0
+                padding_tf = " " * pad_len_tf
+                
+                # Safe formatting using f-string only
+                tf_str = f" {C.RED}{u['o_tf']}{C.NC}→{tf_color}{u['n_tf']}{C.NC}{padding_tf}"
 
-            # --- Date Column Formatting ---
-            date_raw = f"{u['o_date_j']}→{u['n_date_j']}"
-            
-            # Padding: Width - 3 (margin+indent) - length
-            pad_len_date = W_DATE - 3 - len(date_raw)
-            if pad_len_date < 0: pad_len_date = 0
-            
-            date_str = f" {u['o_date_j']}→{C.GREEN}{u['n_date_j']}{C.NC}" + (" " * pad_len_date)
+                # Date Formatting
+                date_raw = f"{u['o_date_j']}→{u['n_date_j']}"
+                pad_len_date = int(W_DATE - 3 - len(date_raw))
+                if pad_len_date < 0: pad_len_date = 0
+                padding_date = " " * pad_len_date
+                
+                date_str = f" {u['o_date_j']}→{C.GREEN}{u['n_date_j']}{C.NC}{padding_date}"
 
-            print(f"{C.BOX}│{C.NC} {idx:02d} {C.BOX}│{C.NC} {C.WHITE}{email_display:<{W_EMAIL-2}}{C.NC} {C.BOX}│{C.NC}   ✅   {C.BOX}│{C.NC} {tf_str} {C.BOX}│{C.NC} {date_str} {C.BOX}│{C.NC}")
-            idx += 1
-            
+                print(f"{C.BOX}│{C.NC} {idx:02d} {C.BOX}│{C.NC} {C.WHITE}{email_display:<{W_EMAIL-2}}{C.NC} {C.BOX}│{C.NC}   ✅   {C.BOX}│{C.NC} {tf_str} {C.BOX}│{C.NC} {date_str} {C.BOX}│{C.NC}")
+                idx += 1
+            except Exception as row_e:
+                 print(f"{C.BOX}│{C.NC} ERR {C.BOX}│{C.NC} {C.RED}Error in row: {str(row_e)}{C.NC}")
+
         print(f"{C.BOX}└{'─'*W_ID}┴{'─'*W_EMAIL}┴{'─'*W_STAT}┴{'─'*W_TRAF}┴{'─'*W_DATE}┘{C.NC}")
         print(f"\n{C.YELLOW}📄 Log saved to: {C.WHITE}{log_file}{C.NC}")
 
 except Exception as e:
-    print(f"{C.RED}🔥 CRITICAL ERROR: {str(e)}{C.NC}")
+    print(f"\n{C.RED}🔥 CRITICAL ERROR!{C.NC}")
+    print(f"{C.YELLOW}▶ Last User Processed: {C.WHITE}{current_processing_user}{C.NC}")
+    print(f"{C.RED}▶ Error Details: {C.WHITE}{str(e)}{C.NC}")
+    print("\nFull Traceback:")
+    traceback.print_exc()
 EOF
 }
 
@@ -329,9 +346,8 @@ while true; do
             echo -e "${BCYAN}╔════════════════════════════════════════════════════╗${NC}"
             echo -e "${BCYAN}║${NC}                    ${BPURPLE}ABOUT SCRIPT${NC}                    ${BCYAN}║${NC}"
             echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
-            # Text lines must pad to 52 chars total visible length
             echo -e "${BCYAN}║${NC} ${BWHITE}This tool manages X-UI SLAs via SQLite.${NC}            ${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01${NC}                                 ${BCYAN}║${NC}"            
+            echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01${NC}                                ${BCYAN}║${NC}"            
             echo -e "${BCYAN}║${NC} ${BWHITE}GitHub : ${BLUE}https://github.com/worldof01${NC}              ${BCYAN}║${NC}"
             echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
             echo -e "${BCYAN}║${NC}                    ${BYELLOW}DONATE (TON)${NC}                    ${BCYAN}║${NC}"
@@ -355,8 +371,6 @@ while true; do
             echo -e "${BCYAN}║${NC}${PAD}${BBLACK}${BG_WHITE}  ▀▀▀▀▀▀▀ ▀   ▀  ▀   ▀   ▀    ${NC}${PAD}${BCYAN}║${NC}"
             
             echo -e "${BCYAN}║${NC}                                                    ${BCYAN}║${NC}"
-            # Wallet Address Centering:
-            # Box width = 52. Address = 48. Padding = (52-48)/2 = 2 spaces.
             echo -e "${BCYAN}║${NC}  ${GREEN}UQAykVgirxEyv8cgHAgpPGXwzUYFwviRZWS1QMGwx3KDHrsV${NC}  ${BCYAN}║${NC}"
             echo -e "${BCYAN}╚════════════════════════════════════════════════════╝${NC}"
             echo ""
