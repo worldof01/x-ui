@@ -50,7 +50,7 @@ show_menu() {
     
     echo -e "   ${BG_PURPLE} ${BWHITE} MAIN MENU ${NC}"
     echo -e "${BCYAN}╔════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BCYAN}║${NC}  ${BPURPLE}[0]${NC} ${BGREEN}➤${NC} ${BWHITE}Set SLA (Update Users/Inbounds)${NC}              ${BCYAN}║${NC}"
+    echo -e "${BCYAN}║${NC}  ${BPURPLE}[0]${NC} ${BGREEN}➤${NC} ${BWHITE}Set SLA (Update Users/Inbounds)${NC}             ${BCYAN}║${NC}"
     echo -e "${BCYAN}║${NC}  ${BPURPLE}[1]${NC} ${BGREEN}➤${NC} ${BWHITE}About Script${NC}                                ${BCYAN}║${NC}"
     echo -e "${BCYAN}║${NC}  ${BPURPLE}[2]${NC} ${BGREEN}➤${NC} ${BRED}Exit${NC}                                        ${BCYAN}║${NC}"
     echo -e "${BCYAN}╚════════════════════════════════════════════════════╝${NC}"
@@ -147,7 +147,6 @@ class C:
     WHITE = '\033[1;37m'
     NC = '\033[0m'
     BOX = '\033[0;36m'
-    # FIXED: Added missing background and bold colors
     BG_PURPLE = '\033[45m'
     BWHITE = '\033[1;37m'
 
@@ -184,24 +183,31 @@ def timestamp_to_jalali(ts):
     return gregorian_to_jalali(dt.year, dt.month, dt.day)
 
 def calc_new_values(old_traffic, old_expiry, traffic_val, is_traffic_percent, days_val, is_days_percent):
-    # Traffic Logic
+    # --- TRAFFIC LOGIC ---
     new_traffic = old_traffic
-    if traffic_val != 0:
+    traffic_is_unlimited = False
+
+    if old_traffic <= 0:
+        # If traffic is 0 or less, consider it Unlimited/Skipped
+        new_traffic = 0
+        traffic_is_unlimited = True
+    elif traffic_val != 0:
+        # Only calculate if not unlimited
         if is_traffic_percent:
             change = (old_traffic * traffic_val) / 100
             new_traffic = old_traffic + change
         else:
             new_traffic = old_traffic + (traffic_val * 1024**3)
     
-    # Date Logic
+    # --- DATE LOGIC ---
     current_time_ms = int(time.time() * 1000)
     new_expiry = old_expiry
-    was_unlimited = False
+    date_is_unlimited = False
 
     if days_val != 0:
         if old_expiry == 0:
             new_expiry = 0
-            was_unlimited = True
+            date_is_unlimited = True
         else:
             if is_days_percent:
                 duration = old_expiry - current_time_ms
@@ -210,9 +216,9 @@ def calc_new_values(old_traffic, old_expiry, traffic_val, is_traffic_percent, da
                 new_expiry = old_expiry + (days_val * 86400000)
     else:
         # If no days added, preserve unlimited status for reporting
-        if old_expiry == 0: was_unlimited = True
+        if old_expiry == 0: date_is_unlimited = True
 
-    return int(new_traffic), int(new_expiry), was_unlimited
+    return int(new_traffic), int(new_expiry), date_is_unlimited, traffic_is_unlimited
 
 # --- MAIN LOGIC ---
 db_path = os.environ.get('DB_PATH')
@@ -271,7 +277,7 @@ try:
                 except: o_exp = 0.0
 
                 # Calc New Values
-                n_tf, n_exp, unlimited = calc_new_values(o_tf, o_exp, traffic_val, is_traffic_percent, days_val, is_days_percent)
+                n_tf, n_exp, unlim_date, unlim_tf = calc_new_values(o_tf, o_exp, traffic_val, is_traffic_percent, days_val, is_days_percent)
 
                 # Apply
                 client['totalGB'] = n_tf
@@ -286,7 +292,8 @@ try:
                     'n_j': timestamp_to_jalali(n_exp),
                     'o_g': timestamp_to_str(o_exp),
                     'n_g': timestamp_to_str(n_exp),
-                    'unlim': unlimited
+                    'unlim_date': unlim_date,
+                    'unlim_tf': unlim_tf
                 })
 
             if modified:
@@ -313,7 +320,7 @@ try:
             except: o_exp = 0.0
             
             # Calc New Values
-            n_tf, n_exp, unlimited = calc_new_values(o_tf, o_exp, traffic_val, is_traffic_percent, days_val, is_days_percent)
+            n_tf, n_exp, unlim_date, unlim_tf = calc_new_values(o_tf, o_exp, traffic_val, is_traffic_percent, days_val, is_days_percent)
             
             # Update DB Directly
             cur.execute("UPDATE inbounds SET total = ?, expiry_time = ? WHERE id = ?", (int(n_tf), int(n_exp), i_id))
@@ -326,7 +333,8 @@ try:
                 'n_j': timestamp_to_jalali(n_exp),
                 'o_g': timestamp_to_str(o_exp),
                 'n_g': timestamp_to_str(n_exp),
-                'unlim': unlimited
+                'unlim_date': unlim_date,
+                'unlim_tf': unlim_tf
             })
 
     con.commit()
@@ -357,15 +365,20 @@ try:
             name_full = str(u['name'])
             name_disp = (name_full[:13] + ".") if len(name_full) > 14 else name_full
 
-            # Traffic
-            # Re-calculating padding manually for perfect align:
-            raw_len_tf = len(f"{u['o_tf']}→{u['n_tf']}")
-            pad_tf = " " * max(0, W_TRAF - 3 - raw_len_tf)
-            tf_str_final = f" {C.RED}{u['o_tf']}{C.NC}→{tf_color}{u['n_tf']}{C.NC} {pad_tf}"
+            # Traffic Display Logic
+            if u['unlim_tf']:
+                msg_tf = "Unlimited"
+                pad_tf = " " * max(0, W_TRAF - 2 - len(msg_tf))
+                tf_str_final = f" {C.CYAN}{msg_tf}{C.NC}{pad_tf}"
+            else:
+                # Re-calculating padding manually for perfect align:
+                raw_len_tf = len(f"{u['o_tf']}→{u['n_tf']}")
+                pad_tf = " " * max(0, W_TRAF - 3 - raw_len_tf)
+                tf_str_final = f" {C.RED}{u['o_tf']}{C.NC}→{tf_color}{u['n_tf']}{C.NC} {pad_tf}"
 
-            # Date
-            if u['unlim']:
-                msg = "skipped / unlimited time"
+            # Date Display Logic
+            if u['unlim_date']:
+                msg = "skipped / unlimited"
                 pad_date = " " * max(0, W_DATE - 3 - len(msg))
                 date_str = f" {C.CYAN}{msg}{C.NC} {pad_date}"
             else:
@@ -398,11 +411,13 @@ try:
         with open(log_file, 'w', encoding='utf-8') as f:
             f.write(f"--- REPORT {datetime.datetime.now()} ---\n")
             for u in updated_users_log:
-                d_s = "Unlimited/Skipped" if u['unlim'] else f"{u['o_j']}->{u['n_j']}"
-                f.write(f"USER | {u['name']} | {u['o_tf']}G->{u['n_tf']}G | {d_s}\n")
+                d_s = "Unlimited/Skipped" if u['unlim_date'] else f"{u['o_j']}->{u['n_j']}"
+                t_s = "Unlimited" if u['unlim_tf'] else f"{u['o_tf']}G->{u['n_tf']}G"
+                f.write(f"USER | {u['name']} | {t_s} | {d_s}\n")
             for i in updated_inbounds_log:
-                d_s = "Unlimited/Skipped" if i['unlim'] else f"{i['o_j']}->{i['n_j']}"
-                f.write(f"INBOUND | {i['name']} | {i['o_tf']}G->{i['n_tf']}G | {d_s}\n")
+                d_s = "Unlimited/Skipped" if i['unlim_date'] else f"{i['o_j']}->{i['n_j']}"
+                t_s = "Unlimited" if i['unlim_tf'] else f"{i['o_tf']}G->{i['n_tf']}G"
+                f.write(f"INBOUND | {i['name']} | {t_s} | {d_s}\n")
                 
         print(f"\n{C.GREEN}✔ Update Successful!{C.NC}")
         print(f"\n{C.PURPLE}🔄 Restarting X-UI Panel...{C.NC}")
@@ -437,7 +452,7 @@ while true; do
             echo -e "${BCYAN}║${NC}                    ${BPURPLE}ABOUT SCRIPT${NC}                    ${BCYAN}║${NC}"
             echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
             echo -e "${BCYAN}║${NC} ${BWHITE}This tool manages X-UI SLAs via SQLite.${NC}            ${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01${NC}                                ${BCYAN}║${NC}"            
+            echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01 ${NC}                                ${BCYAN}║${NC}"            
             echo -e "${BCYAN}║${NC} ${BWHITE}GitHub : ${BLUE}https://github.com/worldof01${NC}              ${BCYAN}║${NC}"
             echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
             echo -e "${BCYAN}║${NC}                    ${BYELLOW}DONATE (TON)${NC}                    ${BCYAN}║${NC}"
