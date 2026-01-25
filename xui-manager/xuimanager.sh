@@ -1,0 +1,695 @@
+#!/bin/bash
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Set to "true" to see detailed logs
+DEBUG_MODE="false"
+BBLUE='\033[1;34m'
+DB_PATH="/etc/x-ui/x-ui.db"
+LOG_FILE="manager_report.txt"
+BACKUP_ROOT="bkup"
+
+# ==========================================
+# COLORS & STYLES
+# ==========================================
+# Regular
+BLACK='\033[0;30m'  RED='\033[0;31m'    GREEN='\033[0;32m'
+YELLOW='\033[0;33m' BLUE='\033[0;34m'   PURPLE='\033[0;35m'
+CYAN='\033[0;36m'   WHITE='\033[0;37m'
+GREY='\033[0;90m'   NC='\033[0m'
+
+# Bold/Backgrounds
+BBLACK='\033[1;30m' BRED='\033[1;31m'   BGREEN='\033[1;32m'
+BYELLOW='\033[1;33m' BBLUE='\033[1;34m'  BPURPLE='\033[1;35m'
+BCYAN='\033[1;36m'  BWHITE='\033[1;37m'
+BG_WHITE='\033[47m' BG_PURPLE='\033[45m'
+
+clear
+
+# ==========================================
+# UI FUNCTIONS
+# ==========================================
+print_header() {
+    # تعریف رنگ‌ها
+    # رنگ سفید برای بدنه اصلی (کاراکترهای توپر)
+    MAIN_COLOR='\033[1;37m' 
+    # رنگ خاکستری تیره برای سایه‌ها و خطوط
+    SHADOW_COLOR='\033[1;30m'
+    # ریست کردن رنگ
+    NC='\033[0m'
+
+    # ذخیره لوگو در یک متغیر
+    read -r -d '' ASCII_ART << "EOF"
+██╗  ██╗     ██╗   ██╗██╗    ███╗   ███╗ █████╗ ███╗   ██╗ █████╗  ██████╗ ███████╗██████╗ 
+╚██╗██╔╝     ██║   ██║██║    ████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝ ██╔════╝██╔══██╗
+ ╚███╔╝█████╗██║   ██║██║    ██╔████╔██║███████║██╔██╗ ██║███████║██║  ███╗█████╗  ██████╔╝
+ ██╔██╗╚════╝██║   ██║██║    ██║╚██╔╝██║██╔══██║██║╚██╗██║██╔══██║██║   ██║██╔══╝  ██╔══██╗
+██╔╝ ██╗     ╚██████╔╝██║    ██║ ╚═╝ ██║██║  ██║██║ ╚████║██║  ██║╚██████╔╝███████╗██║  ██║
+╚═╝  ╚═╝      ╚═════╝ ╚═╝    ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+EOF
+
+    # چاپ لوگو با تغییر رنگ هوشمند
+    # منطق: کل متن را خاکستری کن، اما هر جا '█' دیدی، سفیدش کن و دوباره برگرد به خاکستری
+    echo -e "${SHADOW_COLOR}${ASCII_ART//█/${MAIN_COLOR}█${SHADOW_COLOR}}${NC}"
+    echo ""
+}
+
+print_new_logo() {
+    # تعریف رنگ‌ها
+    MAIN_COLOR='\033[1;37m'   # سفید پررنگ برای بدنه (█)
+    SHADOW_COLOR='\033[1;30m' # خاکستری برای خطوط
+    NC='\033[0m'              # بدون رنگ
+
+    # ذخیره لوگو در متغیر (دقیقاً همان متنی که فرستادید)
+    read -r -d '' LOGO_ART << "EOF"
+                        ██╗    ██╗ ██████╗ ██████╗ ██╗     ██████╗      ██████╗ ███████╗     ██████╗  ██╗
+██║    ██║██╔═══██╗██╔══██╗██║     ██╔══██╗    ██╔═══██╗██╔════╝    ██╔═████╗███║
+██║ █╗ ██║██║   ██║██████╔╝██║     ██║  ██║    ██║   ██║█████╗      ██║██╔██║╚██║
+██║███╗██║██║   ██║██╔══██╗██║     ██║  ██║    ██║   ██║██╔══╝      ████╔╝██║ ██║
+╚███╔███╔╝╚██████╔╝██║  ██║███████╗██████╔╝    ╚██████╔╝██║         ╚██████╔╝ ██║
+ ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═════╝      ╚═════╝ ╚═╝          ╚═════╝  ╚═╝
+EOF
+
+    # چاپ با اعمال رنگ‌بندی خودکار
+    # همه چیز خاکستری می‌شود، به جز کاراکتر '█' که سفید می‌شود
+    echo -e "${SHADOW_COLOR}${LOGO_ART//█/${MAIN_COLOR}█${SHADOW_COLOR}}${NC}"
+    echo ""
+}
+
+print_centered_logo() {
+    # 1. تعریف رنگ‌ها
+    # رنگ سفید پررنگ برای بدنه اصلی
+    MAIN_COLOR='\033[1;37m'
+    # رنگ خاکستری برای سایه‌ها
+    SHADOW_COLOR='\033[1;30m'
+    # رنگ صورتی برای منو (طبق عکس)
+    PINK='\033[1;35m'
+    BLUE='\033[1;36m'
+    NC='\033[0m'
+
+    # 2. تعریف متون
+    # نکته: برای تراز شدن، فاصله‌های اضافی سمت چپ متن بالا را حذف کردم تا با محاسبات ریاضی وسط‌چین شود
+    read -r -d '' LOGO_TOP << "EOF"
+██╗    ██╗ ██████╗ ██████╗ ██╗     ██████╗      ██████╗ ███████╗     ██████╗  ██╗
+██║    ██║██╔═══██╗██╔══██╗██║     ██╔══██╗    ██╔═══██╗██╔════╝    ██╔═████╗███║
+██║ █╗ ██║██║   ██║██████╔╝██║     ██║  ██║    ██║   ██║█████╗      ██║██╔██║╚██║
+██║███╗██║██║   ██║██╔══██╗██║     ██║  ██║    ██║   ██║██╔══╝      ████╔╝██║ ██║
+╚███╔███╔╝╚██████╔╝██║  ██║███████╗██████╔╝    ╚██████╔╝██║         ╚██████╔╝ ██║
+ ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═════╝      ╚═════╝ ╚═╝          ╚═════╝  ╚═╝
+EOF
+
+    read -r -d '' LOGO_BOTTOM << "EOF"
+██╗  ██╗       ██╗   ██╗██╗    ███╗   ███╗ █████╗ ███╗   ██╗ █████╗  ██████╗ ███████╗██████╗ 
+╚██╗██╔╝       ██║   ██║██║    ████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝ ██╔════╝██╔══██╗
+ ╚███╔╝█████╗  ██║   ██║██║    ██╔████╔██║███████║██╔██╗ ██║███████║██║  ███╗█████╗  ██████╔╝
+ ██╔██╗╚════╝  ██║   ██║██║    ██║╚██╔╝██║██╔══██║██║╚██╗██║██╔══██║██║   ██║██╔══╝  ██╔══██╗
+██╔╝ ██╗       ╚██████╔╝██║    ██║ ╚═╝ ██║██║  ██║██║ ╚████║██║  ██║╚██████╔╝███████╗██║  ██║
+╚═╝  ╚═╝        ╚═════╝ ╚═╝    ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝
+EOF
+
+    # 3. محاسبه فاصله‌ها برای وسط‌چین کردن
+    
+    # عرض تقریبی متن بالا (حدود 78 کاراکتر)
+    width_top=88
+    # عرض تقریبی متن پایین (حدود 96 کاراکتر)
+    width_bottom=96
+    
+    # محاسبه فاصله برای اینکه متن بالا دقیقا وسط متن پایین بیفتد
+    # (96 - 88) / 2 = 4 فاصله
+    padding_diff=$(( (width_bottom - width_top) / 2 ))
+    padding_spaces=$(printf '%*s' "$padding_diff" "")
+
+    # دریافت عرض ترمینال کاربر
+    term_width=$(tput cols)
+    # محاسبه فاصله از لبه چپ ترمینال برای کل لوگو
+    left_margin=$(( (term_width - width_bottom) / 2 ))
+    [ "$left_margin" -lt 0 ] && left_margin=0
+    margin_spaces=$(printf '%*s' "$left_margin" "")
+
+    # 4. چاپ خروجی
+    
+    # چاپ خطوط بالا (World of 01)
+    # ساختار: [فاصله از لبه مانیتور] + [فاصله برای تراز شدن با متن پایین] + [متن رنگی]
+    while IFS= read -r line; do
+        colored_line="${SHADOW_COLOR}${line//█/${MAIN_COLOR}█${SHADOW_COLOR}}${NC}"
+        echo -e "${margin_spaces}${padding_spaces}${colored_line}"
+    done <<< "$LOGO_TOP"
+
+    # چاپ خطوط پایین (X-UI MANAGER)
+    # ساختار: [فاصله از لبه مانیتور] + [متن رنگی]
+    while IFS= read -r line; do
+        colored_line="${SHADOW_COLOR}${line//█/${MAIN_COLOR}█${SHADOW_COLOR}}${NC}"
+        echo -e "${margin_spaces}${colored_line}"
+    done <<< "$LOGO_BOTTOM"
+
+    # echo ""
+    # # بخش منو (مثال طبق عکس)
+    # echo -e "${margin_spaces}  ${PINK} MAIN MENU ${NC}"
+    # echo -e "${margin_spaces}${BLUE}┌──────────────────────────────────────────────┐${NC}"
+    # echo -e "${margin_spaces}${BLUE}│${NC} [0] ➤ User Management (SLA / Delete)       ${BLUE}│${NC}"
+    # echo -e "${margin_spaces}${BLUE}│${NC} [1] ➤ About Script                         ${BLUE}│${NC}"
+    # echo -e "${margin_spaces}${BLUE}│${NC} [2] ➤ Exit                                 ${BLUE}│${NC}"
+    # echo -e "${margin_spaces}${BLUE}└──────────────────────────────────────────────┘${NC}"
+    # echo ""
+}
+
+
+print_logo() {
+    # echo -e "${CYAN}"
+    # echo " __          __        _     _     ___   __     ___    __ "
+    # echo " \ \        / /       | |   | |   / _ \ / _|   / _ \  /_ |"
+    # echo "  \ \  /\  / /__  _ __| | __| |  | | | | |_   | | | |  | |"
+    # echo "   \ \/  \/ / _ \| '__| |/ _\` |  | | | |  _|  | | | |  | |"
+    # echo "    \  /\  / (_) | |  | | (_| |  | |_| | |    | |_| |  | |"
+    # echo "     \/  \/ \___/|_|  |_|\__,_|   \___/|_|     \___/   |_|"
+    
+    if [ "$DEBUG_MODE" == "true" ]; then
+        echo -e "${BRED}            [ DEBUG MODE IS ON ]${NC}"
+    fi
+    echo ""
+
+    print_centered_logo
+}
+
+show_menu() {
+    clear
+    print_logo
+    echo -e "   ${BG_PURPLE} ${BWHITE} MAIN MENU ${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}  ${PURPLE}[0]${NC} ${GREEN}➤${NC} ${WHITE}User Management${NC} (SLA / Delete)              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${PURPLE}[1]${NC} ${GREEN}➤${NC} ${WHITE}About Script${NC}                                ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${PURPLE}[2]${NC} ${GREEN}➤${NC} ${BRED}Exit${NC}                                        ${CYAN}║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+print_option() {
+    echo -e "   ${PURPLE}[$1]${NC} ${WHITE}$2${NC} ${YELLOW}$3${NC}"
+}
+
+run_manager() {
+    echo ""
+    echo -e "${CYAN}┌── ${YELLOW}💡 GUIDE${CYAN} ──────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}First Select Job, Then Target, Then Filters${NC}     ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}  ${WHITE}Backup is taken automatically before changes${NC}    ${CYAN}│${NC}"
+    echo -e "${CYAN}└──────────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    # --- 1. JOB ---
+    echo -e "${PURPLE}➜${NC} Select Job ${YELLOW}[Default: 1]${NC}:"
+    print_option "1" "Set SLA" "(Update Traffic/Expiry)"
+    print_option "2" "Delete Selected" "(Remove Matching Users)"
+    read -p "   └─ Selection [1-2]: " J_OPT
+    J_OPT=${J_OPT:-1}
+    if [ "$J_OPT" == "2" ]; then INPUT_JOB="delete"; else INPUT_JOB="sla"; fi
+
+    # --- 2. TARGET ---
+    echo -e "\n${PURPLE}➜${NC} Select Target ${YELLOW}[Default: 1]${NC}:"
+    print_option "1" "All" "(Users & Inbounds)"
+    print_option "2" "Users" "(Clients only)"
+    print_option "3" "Inbounds" "(Ports only)"
+    read -p "   └─ Selection [1-3]: " T_OPT
+    T_OPT=${T_OPT:-1}
+    case $T_OPT in
+        2) INPUT_TARGET="users" ;;
+        3) INPUT_TARGET="inbounds" ;;
+        *) INPUT_TARGET="all" ;;
+    esac
+
+    # --- 3. INPUTS ---
+    INPUT_DAYS="0"; INPUT_TRAFFIC="0"
+    if [ "$INPUT_JOB" == "sla" ]; then
+        echo -e "\n${CYAN}┌── ${YELLOW}SLA VALUES${CYAN} ──────────────────────────────────────┐${NC}"
+        echo -e "${CYAN}│${NC} Fixed: ${GREEN}10${NC} (Add) | Percent: ${GREEN}10%${NC} | Reduce: ${GREEN}-10${NC}       ${CYAN}│${NC}"
+        echo -e "${CYAN}└────────────────────────────────────────────────────┘${NC}"
+        echo -e "${PURPLE}➜${NC} Days SLA ${YELLOW}(Default: 0)${NC}:"
+        read -p "   └─ " INPUT_DAYS
+        INPUT_DAYS=${INPUT_DAYS:-0}
+        echo -e "${PURPLE}➜${NC} Traffic SLA ${YELLOW}(Default: 0)${NC}:"
+        read -p "   └─ " INPUT_TRAFFIC
+        INPUT_TRAFFIC=${INPUT_TRAFFIC:-0}
+    fi
+
+    # --- 4. FILTERS ---
+    echo -e "\n${PURPLE}➜${NC} Time Filter ${YELLOW}[Default: 1]${NC}:"
+    print_option "1" "All" "(Ignore Expiry Date)"
+    print_option "2" "Active" "(Not Expired)"
+    print_option "3" "Expired" "(Date Passed)"
+    read -p "   └─ Selection [1-3]: " TIME_OPT
+    TIME_OPT=${TIME_OPT:-1}
+    case $TIME_OPT in
+        2) INPUT_TIME_STATUS="active" ;;
+        3) INPUT_TIME_STATUS="expired" ;;
+        *) INPUT_TIME_STATUS="all" ;;
+    esac
+
+    echo -e "\n${PURPLE}➜${NC} Traffic Filter ${YELLOW}[Default: 1]${NC}:"
+    print_option "1" "All" "(Ignore Traffic Usage)"
+    print_option "2" "Finished" "(Volume Exhausted)"
+    print_option "3" "Not Finished" "(Volume Remaining)"
+    read -p "   └─ Selection [1-3]: " VOL_OPT
+    VOL_OPT=${VOL_OPT:-1}
+    case $VOL_OPT in
+        2) INPUT_VOL_STATUS="finished" ;;
+        3) INPUT_VOL_STATUS="not_finished" ;;
+        *) INPUT_VOL_STATUS="all" ;;
+    esac
+
+    echo -e "\n${PURPLE}➜${NC} Name Filter (Remark/Email) ${YELLOW}(Default: ALL)${NC}:"
+    read -p "   └─ " INPUT_FILTER
+
+    # --- CONFIRMATION ---
+    JOB_DISPLAY="UPDATE SLA"
+    if [ "$INPUT_JOB" == "delete" ]; then JOB_DISPLAY="${RED}DELETE USERS${NC}"; fi
+    
+    echo -e "\n${BG_PURPLE} STATUS ${NC} ${BWHITE}Job:${JOB_DISPLAY} | Target:${INPUT_TARGET} | Time:${INPUT_TIME_STATUS} | Traffic:${INPUT_VOL_STATUS} | Filter:${INPUT_FILTER}${NC}"
+    
+    if [ "$INPUT_JOB" == "delete" ]; then
+        echo -e "${RED}⚠ WARNING: You are about to DELETE users matching these filters!${NC}"
+        read -p "Press Enter to confirm or Ctrl+C to cancel..."
+    fi
+
+    # --- BACKUP ---
+    echo -e "${BCYAN}--------------------------------------------------${NC}"
+    echo -e "${YELLOW}📂 Backup System Initiated...${NC}"
+    TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+    BACKUP_DIR="$BACKUP_ROOT/$TIMESTAMP"
+
+    if [ -f "$DB_PATH" ]; then
+        mkdir -p "$BACKUP_DIR"
+        cp "$DB_PATH" "$BACKUP_DIR/x-ui.db"
+        if [ $? -eq 0 ]; then
+             echo -e "${GREEN}✔ Backup created: $BACKUP_DIR/x-ui.db${NC}"
+        else
+             echo -e "${RED}❌ Backup Failed!${NC}"
+        fi
+    else
+        echo -e "${RED}⚠ Warning: Database file not found at $DB_PATH${NC}"
+    fi
+
+    echo -e "${BCYAN}--------------------------------------------------${NC}"
+    echo -e "${YELLOW}⚡ Processing Database...${NC}"
+
+    export DB_PATH LOG_FILE INPUT_DAYS INPUT_TRAFFIC INPUT_FILTER INPUT_TARGET INPUT_TIME_STATUS INPUT_VOL_STATUS INPUT_JOB DEBUG_MODE
+
+    # ==========================================
+    # PYTHON LOGIC
+    # ==========================================
+    python3 << 'EOF'
+import sqlite3
+import json
+import os
+import time
+import datetime
+import sys
+
+# Flush output immediately
+sys.stdout.reconfigure(line_buffering=True)
+
+# --- Colors ---
+class C:
+    CYAN = '\033[1;36m'
+    GREEN = '\033[1;32m'
+    YELLOW = '\033[1;33m'
+    RED = '\033[1;31m'
+    NC = '\033[0m'
+    BOX = '\033[0;36m'
+    WHITE = '\033[1;37m'
+    GREY = '\033[0;90m'
+
+# --- HELPERS ---
+def gregorian_to_jalali(gy, gm, gd):
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    if (gy > 1600):
+        jy = 979
+        gy -= 1600
+    else:
+        jy = 0
+        gy -= 621
+    gy2 = (gm > 2) and (gy + 1) or gy
+    days = (365 * gy) + (int((gy2 + 3) / 4)) - (int((gy2 + 99) / 100)) + (int((gy2 + 399) / 400)) - 80 + gd + g_d_m[gm - 1]
+    jy += 33 * (int(days / 12053))
+    days %= 12053
+    jy += 4 * (int(days / 1461))
+    days %= 1461
+    if (days > 365):
+        jy += int((days - 1) / 365)
+        days = (days - 1) % 365
+    jm = (days < 186) and 1 + int(days / 31) or 7 + int((days - 186) / 30)
+    jd = 1 + ((days < 186) and (days % 31) or ((days - 186) % 30))
+    return f"{jy:04d}/{jm:02d}/{jd:02d}"
+
+def timestamp_to_jalali(ts):
+    if ts <= 0: return "Unlimited"
+    dt = datetime.datetime.fromtimestamp(ts / 1000)
+    return gregorian_to_jalali(dt.year, dt.month, dt.day)
+
+def format_volume(b):
+    if b <= 0: return "Unlimited"
+    if b < 1024: return f"{b} B"
+    if b < 1024**2: return f"{round(b/1024, 2)} KB"
+    if b < 1024**3: return f"{round(b/1024**2, 2)} MB"
+    return f"{round(b/1024**3, 2)} GB"
+
+def get_visual_len(s):
+    clean = s.replace(C.RED, '').replace(C.GREEN, '').replace(C.YELLOW, '').replace(C.CYAN, '').replace(C.NC, '')
+    return len(clean)
+
+# --- MAIN ---
+print(f"{C.CYAN}--- PYTHON ENGINE STARTED ---{C.NC}")
+
+db_path = os.environ.get('DB_PATH')
+log_file = os.environ.get('LOG_FILE')
+debug_mode = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
+
+# Inputs
+job_input = os.environ.get('INPUT_JOB', 'sla').lower().strip()
+target_input = os.environ.get('INPUT_TARGET', 'all').lower().strip()
+time_status_input = os.environ.get('INPUT_TIME_STATUS', 'all').lower().strip()
+vol_status_input = os.environ.get('INPUT_VOL_STATUS', 'all').lower().strip()
+filter_str = os.environ.get('INPUT_FILTER', '').strip().lower()
+
+days_input = os.environ.get('INPUT_DAYS', '0').strip()
+traffic_input = os.environ.get('INPUT_TRAFFIC', '0').strip()
+
+# Values parsing
+is_traffic_percent = traffic_input.endswith('%')
+try: traffic_val = float(traffic_input[:-1]) if is_traffic_percent else float(traffic_input)
+except: traffic_val = 0.0
+
+is_days_percent = days_input.endswith('%')
+try: days_val = float(days_input[:-1]) if is_days_percent else float(days_input)
+except: days_val = 0.0
+
+updated_users_log = []
+current_time_ms = int(time.time() * 1000)
+
+if debug_mode:
+    print(f"{C.GREY}[INFO] Target: {target_input} | VolFilter: {vol_status_input} | DB: {db_path}{C.NC}")
+
+try:
+    if not os.path.exists(db_path):
+        print(f"{C.RED}❌ CRITICAL: Database file not found at {db_path}{C.NC}")
+        exit(1)
+
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+
+    # --- 1. LOAD TRAFFIC ---
+    traffic_cache = {}
+    try:
+        if debug_mode: print(f"{C.GREY}[INFO] Reading 'client_traffics' table...{C.NC}")
+        t_rows = cur.execute("SELECT email, up, down FROM client_traffics").fetchall()
+        for tr in t_rows:
+            if tr[0] is None: continue
+            email_key = str(tr[0]).strip().lower()
+            u = int(tr[1]) if tr[1] else 0
+            d = int(tr[2]) if tr[2] else 0
+            traffic_cache[email_key] = u + d
+        
+        if debug_mode: print(f"{C.GREEN}[INFO] Loaded usage data for {len(traffic_cache)} users.{C.NC}")
+    except Exception as e:
+        print(f"{C.RED}[ERROR] Could not read client_traffics: {e}{C.NC}")
+        print(f"{C.RED}[ERROR] Usage data will be 0 for all users!{C.NC}")
+
+    # --- 2. PROCESS LOOP ---
+    match_count = 0
+    
+    if target_input in ['users', 'all']:
+        try:
+            if debug_mode: print(f"{C.GREY}[INFO] Reading 'inbounds' table...{C.NC}")
+            rows = cur.execute("SELECT id, settings FROM inbounds").fetchall()
+        except Exception as e:
+            print(f"{C.RED}[CRITICAL ERROR] Could not read inbounds table: {e}{C.NC}")
+            exit(1)
+        
+        for row in rows:
+            inbound_id = row[0]
+            try: settings = json.loads(row[1])
+            except: continue
+            
+            if 'clients' not in settings: continue
+            clients = settings['clients']
+            new_clients = []
+            is_modified = False
+            
+            for client in clients:
+                email = client.get('email', 'NO_EMAIL')
+                email_key = str(email).strip().lower()
+                
+                # --- DATA EXTRACTION ---
+                raw_total = client.get('totalGB', 0)
+                try: 
+                    o_tf = int(float(raw_total)) 
+                except: 
+                    o_tf = 0
+                
+                raw_expiry = client.get('expiryTime', 0)
+                try: o_exp = int(float(raw_expiry))
+                except: o_exp = 0
+
+                # Get Usage
+                used_bytes = traffic_cache.get(email_key, 0)
+                
+                # === FILTERING LOGIC ===
+                should_skip = False
+                skip_reason = ""
+
+                # 1. Name Filter
+                if filter_str and (filter_str not in email_key): 
+                    should_skip = True
+                    skip_reason = "Name Filter"
+
+                # 2. Time Filter
+                if not should_skip:
+                    is_expired = (o_exp > 0) and (o_exp < current_time_ms)
+                    if time_status_input == 'active' and is_expired: 
+                        should_skip = True
+                        skip_reason = "Time: Is Expired"
+                    elif time_status_input == 'expired' and not is_expired:
+                        should_skip = True
+                        skip_reason = "Time: Is Active"
+
+                # 3. Traffic Filter
+                if not should_skip:
+                    # Logic: If Limit > 0 AND Used >= Limit -> Finished
+                    if o_tf <= 0:
+                        is_finished = False # Unlimited Users Never Finish
+                    else:
+                        is_finished = (used_bytes >= o_tf)
+                    
+                    if vol_status_input == 'finished' and not is_finished:
+                        should_skip = True
+                        if o_tf <= 0:
+                            skip_reason = "Not Finished (Unlimited)"
+                        else:
+                            pct = round((used_bytes/o_tf)*100, 1)
+                            skip_reason = f"Not Finished ({pct}%)"
+                        
+                    elif vol_status_input == 'not_finished' and is_finished:
+                        should_skip = True
+                        skip_reason = "Finished"
+
+                # --- DEBUG PRINT ---
+                if debug_mode:
+                    status_icon = f"{C.RED}[SKIP]{C.NC}" if should_skip else f"{C.GREEN}[MATCH]{C.NC}"
+                    u_str = format_volume(used_bytes)
+                    t_str = format_volume(o_tf)
+                    print(f"{C.GREY}Checking {email:<15} | Usage: {u_str} / Limit: {t_str} | {status_icon} {skip_reason}{C.NC}")
+
+                if should_skip:
+                    new_clients.append(client)
+                    continue
+
+                # === PERFORM ACTION ===
+                match_count += 1
+                log_entry = {
+                    'name': email,
+                    'status': 'UNKNOWN',
+                    'o_tf': o_tf,
+                    'o_ex': o_exp,
+                    'n_tf': o_tf,
+                    'n_ex': o_exp
+                }
+
+                if job_input == 'delete':
+                    is_modified = True
+                    log_entry['status'] = 'DELETED'
+                    try: cur.execute("DELETE FROM client_traffics WHERE email = ?", (email,))
+                    except: pass
+                    # Do NOT append to new_clients -> Delete
+                
+                else:
+                    # SLA UPDATE
+                    new_tf = o_tf
+                    if traffic_val != 0:
+                        if is_traffic_percent:
+                            change = (o_tf * traffic_val) / 100
+                            new_tf = int(o_tf + change)
+                        else:
+                            new_tf = int(o_tf + (traffic_val * 1024**3))
+                    
+                    new_ex = o_exp
+                    if days_val != 0:
+                        if o_exp == 0:
+                            new_ex = int(current_time_ms + (days_val * 86400000))
+                        else:
+                            if is_days_percent:
+                                duration = o_exp - current_time_ms
+                                if duration > 0: new_ex = int(o_exp + ((duration * days_val) / 100))
+                            else:
+                                new_ex = int(o_exp + (days_val * 86400000))
+                    
+                    if new_tf != o_tf or new_ex != o_exp:
+                        client['totalGB'] = new_tf
+                        client['expiryTime'] = new_ex
+                        
+                        try: cur.execute("UPDATE client_traffics SET total = ?, expiry_time = ? WHERE email = ?", (new_tf, new_ex, email))
+                        except: pass
+                        
+                        log_entry['status'] = 'UPDATED'
+                        log_entry['n_tf'] = new_tf
+                        log_entry['n_ex'] = new_ex
+                        is_modified = True
+                    
+                    new_clients.append(client)
+                
+                if log_entry['status'] != 'UNKNOWN':
+                    updated_users_log.append(log_entry)
+
+            if is_modified:
+                settings['clients'] = new_clients
+                # === KEY FIX: INDENT=2 FOR PRETTY JSON PRESERVATION ===
+                new_json = json.dumps(settings, indent=2, ensure_ascii=False)
+                cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (new_json, inbound_id))
+
+    con.commit()
+    con.close()
+
+    # --- 3. REPORTING TABLE ---
+    W_ID = 4
+    W_NAME = 18 
+    W_STAT = 10 
+    W_TRAF = 24
+    W_DATE = 28
+
+    if not updated_users_log:
+        print(f"\n{C.RED}🚫 No users found matching criteria.{C.NC}")
+    else:
+        print(f"\n{C.YELLOW} REPORT {C.NC} {C.WHITE}Processed {len(updated_users_log)} Users{C.NC}")
+        
+        print(f"{C.BOX}┌{'─'*W_ID}┬{'─'*W_NAME}┬{'─'*W_STAT}┬{'─'*W_TRAF}┬{'─'*W_DATE}┐{C.NC}")
+        print(f"{C.BOX}│{C.NC} {C.WHITE}{'#':<{W_ID-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Email':<{W_NAME-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Status':<{W_STAT-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Traffic(GB)':<{W_TRAF-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Expiry':<{W_DATE-2}}{C.NC} {C.BOX}│{C.NC}")
+        print(f"{C.BOX}├{'─'*W_ID}┼{'─'*W_NAME}┼{'─'*W_STAT}┼{'─'*W_TRAF}┼{'─'*W_DATE}┤{C.NC}")
+
+        for idx, u in enumerate(updated_users_log, 1):
+            name = (u['name'][:15] + '..') if len(u['name']) > 16 else u['name']
+            
+            if u['status'] == 'DELETED':
+                status = f"{C.RED}DELETED{C.NC} "
+                traf = f"{C.RED}{format_volume(u['o_tf'])}{C.NC}"
+                date = f"{C.RED}{timestamp_to_jalali(u['o_ex'])}{C.NC}"
+            else:
+                status = f"{C.GREEN}UPDATED{C.NC} "
+                traf = f"{format_volume(u['o_tf'])}→{C.YELLOW}{format_volume(u['n_tf'])}{C.NC}"
+                date = f"{timestamp_to_jalali(u['o_ex'])}→{C.GREEN}{timestamp_to_jalali(u['n_ex'])}{C.NC}"
+            
+            # Manual Padding
+            vis_len_traf = get_visual_len(traf)
+            pad_traf = W_TRAF - 2 - vis_len_traf
+            if pad_traf < 0: pad_traf = 0
+            traf_str = traf + (" " * pad_traf)
+
+            vis_len_date = get_visual_len(date)
+            pad_date = W_DATE - 2 - vis_len_date
+            if pad_date < 0: pad_date = 0
+            date_str = date + (" " * pad_date)
+
+            print(f"{C.BOX}│{C.NC} {idx:02d} {C.BOX}│{C.NC} {C.WHITE}{name:<{W_NAME-2}}{C.NC} {C.BOX}│{C.NC} {status} {C.BOX}│{C.NC} {traf_str} {C.BOX}│{C.NC} {date_str} {C.BOX}│{C.NC}")
+        
+        print(f"{C.BOX}└{'─'*W_ID}┴{'─'*W_NAME}┴{'─'*W_STAT}┴{'─'*W_TRAF}┴{'─'*W_DATE}┘{C.NC}")
+        
+        # File Report
+        with open(log_file, 'w') as f:
+            f.write(f"--- REPORT {datetime.datetime.now()} ---\n")
+            for u in updated_users_log:
+                f.write(f"{u['name']} | {u['status']} | {u['o_tf']}->{u['n_tf']}\n")
+
+        print(f"\n{C.YELLOW}🔄 Restarting X-UI Panel...{C.NC}")
+        os.system("x-ui restart > /dev/null 2>&1")
+        print(f"{C.GREEN}✔ Done. Log saved to {log_file}{C.NC}")
+
+except Exception as e:
+    print(f"\n{C.RED}🔥 Error: {e}{C.NC}")
+    import traceback
+    traceback.print_exc()
+EOF
+}
+
+# ==========================================
+# MAIN LOOP
+# ==========================================
+while true; do
+    show_menu
+    read -p " ➤ Select: " choice
+    case $choice in
+        0)
+            run_manager
+            read -p "Press Enter to return..."
+            ;;
+        1)
+            clear
+            print_logo
+            # Width calculation: Borders + 52 internal chars
+            echo -e "${BCYAN}╔════════════════════════════════════════════════════╗${NC}"
+            echo -e "${BCYAN}║${NC}                    ${BPURPLE}ABOUT SCRIPT${NC}                    ${BCYAN}║${NC}"
+            echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
+            # Text lines must pad to 52 chars total visible length
+            echo -e "${BCYAN}║${NC} ${BWHITE}This tool manages X-UI via SQLite.${NC}                 ${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01${NC}                                 ${BCYAN}║${NC}"            
+            echo -e "${BCYAN}║${NC} ${BWHITE}GitHub : ${BLUE}https://github.com/worldof01${NC}              ${BCYAN}║${NC}"
+            echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
+            echo -e "${BCYAN}║${NC}                    ${BYELLOW}DONATE (TON)${NC}                    ${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC} ${BWHITE}Buy me a coffee if you liked it!${NC}                   ${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}                                                    ${BCYAN}║${NC}"
+            
+# QR Code Centering Logic:
+            # Box width = 52. QR width = 30. Padding = (52-30)/2 = 11 spaces.
+            PAD="           "
+            
+            # تغییرات در اینجا اعمال شد:
+            # به جای ${BBLACK}${BG_WHITE} از ${BBLUE} استفاده شد.
+            # اگر متغیر BBLUE را ندارید، در ابتدای اسکریپت اضافه کنید: BBLUE='\033[1;34m'
+            
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄  ▄   ▄▄▄ ▄▄▄▄▄▄▄    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▀ ▀█▄▀██ █ ▄▄▄ █    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ ▀█▀ ▄▀ █ █ ███ █    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▄▄▄▄▄█ █ █ █▀▄█ █▄▄▄▄▄█    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄  ▄ ▄▄▄▄▀ ▄▄   ▄ ▄ ▄    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▀▄▀▀ ▄▀█▀▀▀▀█▀▄▀▄▀▄█▀ █    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ █▀▀▄▄  █▀▀ ▀▄█ █▄ █ ▀█    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄ █▄▄ ▀▄▀█ ▄ █ ▀▀█    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▄ █▄█ ▄█▄▄▄█ █▄█    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ █▀▄▀ ▀▄▀ █▄▀█▀▄█    ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▀▀▀▀▀▀▀ ▀   ▀  ▀   ▀   ▀    ${NC}${PAD}${BCYAN}║${NC}"
+            
+            echo -e "${BCYAN}║${NC}                                                    ${BCYAN}║${NC}"
+            
+            # Wallet Address Centering:
+            # Box width = 52. Address = 48. Padding = (52-48)/2 = 2 spaces.
+            echo -e "${BCYAN}║${NC}  ${GREEN}UQAykVgirxEyv8cgHAgpPGXwzUYFwviRZWS1QMGwx3KDHrsV${NC}  ${BCYAN}║${NC}"
+            echo -e "${BCYAN}╚════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            read -p "Press Enter to return..."
+            ;;
+        2)
+            echo -e "${BRED}good bye...${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${BRED}Invalid option!${NC}"
+            sleep 1
+            ;;
+    esac
+done
