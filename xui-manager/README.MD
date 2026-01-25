@@ -46,8 +46,8 @@
 
 برای نصب و اجرای ابزار، کافیست دستور زیر را در ترمینال سرور خود وارد کنید. این دستور اسکریپت را از مخزن GitHub دانلود و به‌صورت مستقیم اجرا می‌کند:
 
-```bash
-bash <(curl -Ls https://github.com/worldof01/x-ui/blob/main/xui-manager/xuimanager.sh)
+```
+bash <(curl -Ls https://raw.githubusercontent.com/worldof01/x-ui/main/xui-manager/xuimanager.sh)
 ```
 
 پس از اجرای دستور، منوی اصلی برنامه نمایش داده می‌شود و می‌توانید عملیات مورد نظر خود را انتخاب کنید. برای خروج از برنامه در هر مرحله می‌توانید از کلیدهای `Ctrl+C` استفاده کنید.
