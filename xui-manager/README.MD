@@ -62,9 +62,9 @@ bash <(curl -Ls https://github.com/worldof01/x-ui/blob/main/xui-manager/xuimanag
 
 ```
 ╔════════════════════════════════════════════════════╗
-║  [0] ➤ User Management (SLA / Delete)              ║
-║  [1] ➤ About Script                                ║
-║  [2] ➤ Exit                                        ║
+║  [0] ➤ User Management (SLA / Delete)             ║
+║  [1] ➤ About Script                               ║
+║  [2] ➤ Exit                                       ║
 ╚════════════════════════════════════════════════════╝
 ```
 
@@ -278,7 +278,7 @@ cp /etc/x-ui/x-ui.db /path/to/backup/x-ui-backup-$(date +%Y%m%d).db
 │ 01 │ user1@test.com   │ UPDATED │ 100→120                │ 1403/04/15→1403/05/15  │
 │ 02 │ user2@test.com   │ UPDATED │ 50→60                  │ 1403/04/20→1403/05/20  │
 │ 03 │ vip@domain.com   │ UPDATED │ Unlimited→Unlimited    │ 1403/04/10→1403/05/10  │
-│ 04 │ test@site.com    │ DELETED │ 0                      │ 1402/12/01              │
+│ 04 │ test@site.com    │ DELETED │ 0                      │ 1402/12/01             │
 │ 05 │ user5@test.com   │ UPDATED │ 200→200                │ Unlimited→Unlimited    │
 └────┴──────────────────┴─────────┴────────────────────────┴────────────────────────┘
 ```
@@ -314,10 +314,10 @@ DEBUG_MODE="true"
 
 ```bash
 # دانلود اسکریپت
-curl -O https://raw.githubusercontent.com/worldof01/x-ui/main/sla-manage/xuislatool.sh
+curl -O https://raw.githubusercontent.com/worldof01/x-ui/main/xui-manager/xuimanager.sh
 
 # اجرای اسکریپت
-bash xuislatool.sh
+bash xuimanager.sh
 ```
 
 ---
