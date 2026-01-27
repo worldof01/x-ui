@@ -206,16 +206,21 @@ run_manager() {
 
     # --- 2. TARGET ---
     echo -e "\n${PURPLE}➜${NC} Select Target ${YELLOW}[Default: 1]${NC}:"
-    print_option "1" "All" "(Users & Inbounds)"
-    print_option "2" "Users" "(Clients only)"
-    print_option "3" "Inbounds" "(Ports only)"
-    read -p "   └─ Selection [1-3]: " T_OPT
+    print_option "1" "All Users" "(Clients only)"
+    print_option "2" "Inbounds" "(Ports/Inbounds Only)"
+    read -p "   └─ Selection [1-2]: " T_OPT
     T_OPT=${T_OPT:-1}
     case $T_OPT in
-        2) INPUT_TARGET="users" ;;
-        3) INPUT_TARGET="inbounds" ;;
-        *) INPUT_TARGET="all" ;;
+        2) INPUT_TARGET="inbounds" ;;
+        *) INPUT_TARGET="users" ;;
     esac
+
+    # Prevent Delete Job on Inbounds (Safety)
+    if [ "$INPUT_TARGET" == "inbounds" ] && [ "$INPUT_JOB" == "delete" ]; then
+        echo -e "\n${RED}⚠  Operation Not Allowed:${NC} You cannot batch DELETE inbounds with this script."
+        echo -e "   Switched Job to ${GREEN}Set SLA${NC} automatically."
+        INPUT_JOB="sla"
+    fi
 
     # --- 3. INPUTS ---
     INPUT_DAYS="0"; INPUT_TRAFFIC="0"
@@ -365,7 +370,7 @@ debug_mode = os.environ.get('DEBUG_MODE', 'false').lower() == 'true'
 
 # Inputs
 job_input = os.environ.get('INPUT_JOB', 'sla').lower().strip()
-target_input = os.environ.get('INPUT_TARGET', 'all').lower().strip()
+target_input = os.environ.get('INPUT_TARGET', 'users').lower().strip()
 time_status_input = os.environ.get('INPUT_TIME_STATUS', 'all').lower().strip()
 vol_status_input = os.environ.get('INPUT_VOL_STATUS', 'all').lower().strip()
 filter_str = os.environ.get('INPUT_FILTER', '').strip().lower()
@@ -382,11 +387,11 @@ is_days_percent = days_input.endswith('%')
 try: days_val = float(days_input[:-1]) if is_days_percent else float(days_input)
 except: days_val = 0.0
 
-updated_users_log = []
+updated_log = []
 current_time_ms = int(time.time() * 1000)
 
 if debug_mode:
-    print(f"{C.GREY}[INFO] Target: {target_input} | VolFilter: {vol_status_input} | DB: {db_path}{C.NC}")
+    print(f"{C.GREY}[INFO] Job: {job_input} | Target: {target_input} | DB: {db_path}{C.NC}")
 
 try:
     if not os.path.exists(db_path):
@@ -396,34 +401,108 @@ try:
     con = sqlite3.connect(db_path)
     cur = con.cursor()
 
-    # --- 1. LOAD TRAFFIC ---
-    traffic_cache = {}
-    try:
-        if debug_mode: print(f"{C.GREY}[INFO] Reading 'client_traffics' table...{C.NC}")
-        t_rows = cur.execute("SELECT email, up, down FROM client_traffics").fetchall()
-        for tr in t_rows:
-            if tr[0] is None: continue
-            email_key = str(tr[0]).strip().lower()
-            u = int(tr[1]) if tr[1] else 0
-            d = int(tr[2]) if tr[2] else 0
-            traffic_cache[email_key] = u + d
+    # =========================================================
+    # LOGIC 1: PROCESS INBOUNDS (Directly in 'inbounds' table)
+    # =========================================================
+    if target_input == 'inbounds':
+        if debug_mode: print(f"{C.GREY}[INFO] Processing Inbounds Mode...{C.NC}")
         
-        if debug_mode: print(f"{C.GREEN}[INFO] Loaded usage data for {len(traffic_cache)} users.{C.NC}")
-    except Exception as e:
-        print(f"{C.RED}[ERROR] Could not read client_traffics: {e}{C.NC}")
-        print(f"{C.RED}[ERROR] Usage data will be 0 for all users!{C.NC}")
+        # Inbounds Table: id, up, down, total, expiry_time, remark, port, protocol
+        rows = cur.execute("SELECT id, up, down, total, expiry_time, remark, port, protocol FROM inbounds").fetchall()
+        
+        for row in rows:
+            i_id = row[0]
+            # Usage in inbounds is up + down directly
+            used_bytes = (row[1] if row[1] else 0) + (row[2] if row[2] else 0)
+            o_tf = int(row[3]) if row[3] else 0
+            o_exp = int(row[4]) if row[4] else 0
+            remark = str(row[5]) if row[5] else ""
+            port = str(row[6])
+            
+            # Identifier for filtering
+            inbound_name = f"{remark} ({port})".strip().lower()
+            
+            # --- FILTERING ---
+            should_skip = False
+            skip_reason = ""
+            
+            # 1. Name Filter
+            if filter_str and (filter_str not in inbound_name):
+                should_skip = True
+                skip_reason = "Name Mismatch"
 
-    # --- 2. PROCESS LOOP ---
-    match_count = 0
-    
-    if target_input in ['users', 'all']:
+            # 2. Time Filter
+            if not should_skip:
+                is_expired = (o_exp > 0) and (o_exp < current_time_ms)
+                if time_status_input == 'active' and is_expired:
+                    should_skip = True; skip_reason = "Expired"
+                elif time_status_input == 'expired' and not is_expired:
+                    should_skip = True; skip_reason = "Active"
+
+            # 3. Traffic Filter
+            if not should_skip:
+                if o_tf <= 0: is_finished = False
+                else: is_finished = (used_bytes >= o_tf)
+                
+                if vol_status_input == 'finished' and not is_finished:
+                    should_skip = True; skip_reason = "Not Finished"
+                elif vol_status_input == 'not_finished' and is_finished:
+                    should_skip = True; skip_reason = "Finished"
+
+            if debug_mode:
+                res = "SKIP" if should_skip else "MATCH"
+                print(f"{C.GREY}[INBOUND] {inbound_name} | {res} {skip_reason}{C.NC}")
+
+            if should_skip: continue
+
+            # --- CALCULATION ---
+            new_tf = o_tf
+            if traffic_val != 0:
+                if is_traffic_percent:
+                    change = (o_tf * traffic_val) / 100
+                    new_tf = int(o_tf + change)
+                else:
+                    new_tf = int(o_tf + (traffic_val * 1024**3))
+
+            new_ex = o_exp
+            if days_val != 0:
+                if o_exp == 0:
+                    new_ex = int(current_time_ms + (days_val * 86400000))
+                else:
+                    if is_days_percent:
+                        duration = o_exp - current_time_ms
+                        if duration > 0: new_ex = int(o_exp + ((duration * days_val) / 100))
+                    else:
+                        new_ex = int(o_exp + (days_val * 86400000))
+
+            # --- UPDATE ---
+            if new_tf != o_tf or new_ex != o_exp:
+                cur.execute("UPDATE inbounds SET total = ?, expiry_time = ? WHERE id = ?", (new_tf, new_ex, i_id))
+                updated_log.append({
+                    'name': inbound_name, 'status': 'UPDATED',
+                    'o_tf': o_tf, 'n_tf': new_tf,
+                    'o_ex': o_exp, 'n_ex': new_ex
+                })
+
+    # =========================================================
+    # LOGIC 2: PROCESS CLIENTS (Users inside Inbounds)
+    # =========================================================
+    else: # target == 'users' or 'all'
+        if debug_mode: print(f"{C.GREY}[INFO] Processing Clients Mode...{C.NC}")
+
+        # 1. Load Traffic Stats
+        traffic_cache = {}
         try:
-            if debug_mode: print(f"{C.GREY}[INFO] Reading 'inbounds' table...{C.NC}")
-            rows = cur.execute("SELECT id, settings FROM inbounds").fetchall()
+            t_rows = cur.execute("SELECT email, up, down FROM client_traffics").fetchall()
+            for tr in t_rows:
+                if tr[0]:
+                    email_key = str(tr[0]).strip().lower()
+                    traffic_cache[email_key] = (tr[1] if tr[1] else 0) + (tr[2] if tr[2] else 0)
         except Exception as e:
-            print(f"{C.RED}[CRITICAL ERROR] Could not read inbounds table: {e}{C.NC}")
-            exit(1)
-        
+            if debug_mode: print(f"{C.RED}Error reading client_traffics: {e}{C.NC}")
+
+        # 2. Iterate Inbounds
+        rows = cur.execute("SELECT id, settings FROM inbounds").fetchall()
         for row in rows:
             inbound_id = row[0]
             try: settings = json.loads(row[1])
@@ -438,90 +517,46 @@ try:
                 email = client.get('email', 'NO_EMAIL')
                 email_key = str(email).strip().lower()
                 
-                # --- DATA EXTRACTION ---
                 raw_total = client.get('totalGB', 0)
-                try: 
-                    o_tf = int(float(raw_total)) 
-                except: 
-                    o_tf = 0
+                try: o_tf = int(float(raw_total)) 
+                except: o_tf = 0
                 
                 raw_expiry = client.get('expiryTime', 0)
                 try: o_exp = int(float(raw_expiry))
                 except: o_exp = 0
 
-                # Get Usage
                 used_bytes = traffic_cache.get(email_key, 0)
                 
-                # === FILTERING LOGIC ===
+                # --- FILTERING ---
                 should_skip = False
-                skip_reason = ""
-
-                # 1. Name Filter
-                if filter_str and (filter_str not in email_key): 
-                    should_skip = True
-                    skip_reason = "Name Filter"
-
-                # 2. Time Filter
+                # ... same filters as before ...
+                if filter_str and (filter_str not in email_key): should_skip = True
+                
                 if not should_skip:
                     is_expired = (o_exp > 0) and (o_exp < current_time_ms)
-                    if time_status_input == 'active' and is_expired: 
-                        should_skip = True
-                        skip_reason = "Time: Is Expired"
-                    elif time_status_input == 'expired' and not is_expired:
-                        should_skip = True
-                        skip_reason = "Time: Is Active"
+                    if time_status_input == 'active' and is_expired: should_skip = True
+                    elif time_status_input == 'expired' and not is_expired: should_skip = True
 
-                # 3. Traffic Filter
                 if not should_skip:
-                    # Logic: If Limit > 0 AND Used >= Limit -> Finished
-                    if o_tf <= 0:
-                        is_finished = False # Unlimited Users Never Finish
-                    else:
-                        is_finished = (used_bytes >= o_tf)
-                    
-                    if vol_status_input == 'finished' and not is_finished:
-                        should_skip = True
-                        if o_tf <= 0:
-                            skip_reason = "Not Finished (Unlimited)"
-                        else:
-                            pct = round((used_bytes/o_tf)*100, 1)
-                            skip_reason = f"Not Finished ({pct}%)"
-                        
-                    elif vol_status_input == 'not_finished' and is_finished:
-                        should_skip = True
-                        skip_reason = "Finished"
-
-                # --- DEBUG PRINT ---
-                if debug_mode:
-                    status_icon = f"{C.RED}[SKIP]{C.NC}" if should_skip else f"{C.GREEN}[MATCH]{C.NC}"
-                    u_str = format_volume(used_bytes)
-                    t_str = format_volume(o_tf)
-                    print(f"{C.GREY}Checking {email:<15} | Usage: {u_str} / Limit: {t_str} | {status_icon} {skip_reason}{C.NC}")
+                    if o_tf <= 0: is_finished = False
+                    else: is_finished = (used_bytes >= o_tf)
+                    if vol_status_input == 'finished' and not is_finished: should_skip = True
+                    elif vol_status_input == 'not_finished' and is_finished: should_skip = True
 
                 if should_skip:
                     new_clients.append(client)
                     continue
 
-                # === PERFORM ACTION ===
-                match_count += 1
-                log_entry = {
-                    'name': email,
-                    'status': 'UNKNOWN',
-                    'o_tf': o_tf,
-                    'o_ex': o_exp,
-                    'n_tf': o_tf,
-                    'n_ex': o_exp
-                }
+                # --- ACTION ---
+                log_entry = {'name': email, 'status': 'UNKNOWN', 'o_tf': o_tf, 'o_ex': o_exp, 'n_tf': o_tf, 'n_ex': o_exp}
 
                 if job_input == 'delete':
                     is_modified = True
                     log_entry['status'] = 'DELETED'
-                    try: cur.execute("DELETE FROM client_traffics WHERE email = ?", (email,))
-                    except: pass
-                    # Do NOT append to new_clients -> Delete
-                
+                    cur.execute("DELETE FROM client_traffics WHERE email = ?", (email,))
+                    # Don't add to new_clients
                 else:
-                    # SLA UPDATE
+                    # CALCULATION (Same as inbounds but for client dict)
                     new_tf = o_tf
                     if traffic_val != 0:
                         if is_traffic_percent:
@@ -545,8 +580,8 @@ try:
                         client['totalGB'] = new_tf
                         client['expiryTime'] = new_ex
                         
-                        try: cur.execute("UPDATE client_traffics SET total = ?, expiry_time = ? WHERE email = ?", (new_tf, new_ex, email))
-                        except: pass
+                        # Update client_traffics too (Sanaei sync)
+                        cur.execute("UPDATE client_traffics SET total = ?, expiry_time = ? WHERE email = ?", (new_tf, new_ex, email))
                         
                         log_entry['status'] = 'UPDATED'
                         log_entry['n_tf'] = new_tf
@@ -556,34 +591,28 @@ try:
                     new_clients.append(client)
                 
                 if log_entry['status'] != 'UNKNOWN':
-                    updated_users_log.append(log_entry)
+                    updated_log.append(log_entry)
 
             if is_modified:
                 settings['clients'] = new_clients
-                # === KEY FIX: INDENT=2 FOR PRETTY JSON PRESERVATION ===
                 new_json = json.dumps(settings, indent=2, ensure_ascii=False)
                 cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (new_json, inbound_id))
 
     con.commit()
     con.close()
 
-    # --- 3. REPORTING TABLE ---
-    W_ID = 4
-    W_NAME = 18 
-    W_STAT = 10 
-    W_TRAF = 24
-    W_DATE = 28
+    # --- REPORTING ---
+    W_ID = 4; W_NAME = 18; W_STAT = 10; W_TRAF = 24; W_DATE = 28
 
-    if not updated_users_log:
-        print(f"\n{C.RED}🚫 No users found matching criteria.{C.NC}")
+    if not updated_log:
+        print(f"\n{C.RED}🚫 No targets found matching criteria.{C.NC}")
     else:
-        print(f"\n{C.YELLOW} REPORT {C.NC} {C.WHITE}Processed {len(updated_users_log)} Users{C.NC}")
-        
+        print(f"\n{C.YELLOW} REPORT {C.NC} {C.WHITE}Processed {len(updated_log)} Items{C.NC}")
         print(f"{C.BOX}┌{'─'*W_ID}┬{'─'*W_NAME}┬{'─'*W_STAT}┬{'─'*W_TRAF}┬{'─'*W_DATE}┐{C.NC}")
-        print(f"{C.BOX}│{C.NC} {C.WHITE}{'#':<{W_ID-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Email':<{W_NAME-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Status':<{W_STAT-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Traffic(GB)':<{W_TRAF-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Expiry':<{W_DATE-2}}{C.NC} {C.BOX}│{C.NC}")
+        print(f"{C.BOX}│{C.NC} {C.WHITE}{'#':<{W_ID-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Name':<{W_NAME-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Status':<{W_STAT-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Traffic(GB)':<{W_TRAF-2}}{C.NC} {C.BOX}│{C.NC} {C.WHITE}{'Expiry':<{W_DATE-2}}{C.NC} {C.BOX}│{C.NC}")
         print(f"{C.BOX}├{'─'*W_ID}┼{'─'*W_NAME}┼{'─'*W_STAT}┼{'─'*W_TRAF}┼{'─'*W_DATE}┤{C.NC}")
 
-        for idx, u in enumerate(updated_users_log, 1):
+        for idx, u in enumerate(updated_log, 1):
             name = (u['name'][:15] + '..') if len(u['name']) > 16 else u['name']
             
             if u['status'] == 'DELETED':
@@ -595,25 +624,21 @@ try:
                 traf = f"{format_volume(u['o_tf'])}→{C.YELLOW}{format_volume(u['n_tf'])}{C.NC}"
                 date = f"{timestamp_to_jalali(u['o_ex'])}→{C.GREEN}{timestamp_to_jalali(u['n_ex'])}{C.NC}"
             
-            # Manual Padding
             vis_len_traf = get_visual_len(traf)
-            pad_traf = W_TRAF - 2 - vis_len_traf
-            if pad_traf < 0: pad_traf = 0
+            pad_traf = max(0, W_TRAF - 2 - vis_len_traf)
             traf_str = traf + (" " * pad_traf)
 
             vis_len_date = get_visual_len(date)
-            pad_date = W_DATE - 2 - vis_len_date
-            if pad_date < 0: pad_date = 0
+            pad_date = max(0, W_DATE - 2 - vis_len_date)
             date_str = date + (" " * pad_date)
 
             print(f"{C.BOX}│{C.NC} {idx:02d} {C.BOX}│{C.NC} {C.WHITE}{name:<{W_NAME-2}}{C.NC} {C.BOX}│{C.NC} {status} {C.BOX}│{C.NC} {traf_str} {C.BOX}│{C.NC} {date_str} {C.BOX}│{C.NC}")
         
         print(f"{C.BOX}└{'─'*W_ID}┴{'─'*W_NAME}┴{'─'*W_STAT}┴{'─'*W_TRAF}┴{'─'*W_DATE}┘{C.NC}")
         
-        # File Report
         with open(log_file, 'w') as f:
             f.write(f"--- REPORT {datetime.datetime.now()} ---\n")
-            for u in updated_users_log:
+            for u in updated_log:
                 f.write(f"{u['name']} | {u['status']} | {u['o_tf']}->{u['n_tf']}\n")
 
         print(f"\n{C.YELLOW}🔄 Restarting X-UI Panel...{C.NC}")
@@ -641,11 +666,9 @@ while true; do
         1)
             clear
             print_logo
-            # Width calculation: Borders + 52 internal chars
             echo -e "${BCYAN}╔════════════════════════════════════════════════════╗${NC}"
             echo -e "${BCYAN}║${NC}                    ${BPURPLE}ABOUT SCRIPT${NC}                    ${BCYAN}║${NC}"
             echo -e "${BCYAN}╠════════════════════════════════════════════════════╣${NC}"
-            # Text lines must pad to 52 chars total visible length
             echo -e "${BCYAN}║${NC} ${BWHITE}This tool manages X-UI via SQLite.${NC}                 ${BCYAN}║${NC}"
             echo -e "${BCYAN}║${NC} ${BWHITE}Code by: ${BGREEN}worldof01${NC}                                 ${BCYAN}║${NC}"            
             echo -e "${BCYAN}║${NC} ${BWHITE}GitHub : ${BLUE}https://github.com/worldof01${NC}              ${BCYAN}║${NC}"
@@ -654,30 +677,19 @@ while true; do
             echo -e "${BCYAN}║${NC} ${BWHITE}Buy me a coffee if you liked it!${NC}                   ${BCYAN}║${NC}"
             echo -e "${BCYAN}║${NC}                                                    ${BCYAN}║${NC}"
             
-# QR Code Centering Logic:
-            # Box width = 52. QR width = 30. Padding = (52-30)/2 = 11 spaces.
-            PAD="           "
-            
-            # تغییرات در اینجا اعمال شد:
-            # به جای ${BBLACK}${BG_WHITE} از ${BBLUE} استفاده شد.
-            # اگر متغیر BBLUE را ندارید، در ابتدای اسکریپت اضافه کنید: BBLUE='\033[1;34m'
-            
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄  ▄   ▄▄▄ ▄▄▄▄▄▄▄    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▀ ▀█▄▀██ █ ▄▄▄ █    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ ▀█▀ ▄▀ █ █ ███ █    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▄▄▄▄▄█ █ █ █▀▄█ █▄▄▄▄▄█    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄  ▄ ▄▄▄▄▀ ▄▄   ▄ ▄ ▄    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▀▄▀▀ ▄▀█▀▀▀▀█▀▄▀▄▀▄█▀ █    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ █▀▀▄▄  █▀▀ ▀▄█ █▄ █ ▀█    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄ █▄▄ ▀▄▀█ ▄ █ ▀▀█    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▄ █▄█ ▄█▄▄▄█ █▄█    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ █▀▄▀ ▀▄▀ █▄▀█▀▄█    ${NC}${PAD}${BCYAN}║${NC}"
-            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▀▀▀▀▀▀▀ ▀   ▀  ▀   ▀   ▀    ${NC}${PAD}${BCYAN}║${NC}"
-            
+            PAD="          "
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄  ▄   ▄▄▄ ▄▄▄▄▄▄▄      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▀ ▀█▄▀██ █ ▄▄▄ █      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ ▀█▀ ▄▀ █ █ ███ █      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▄▄▄▄▄█ █ █ █▀▄█ █▄▄▄▄▄█      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄  ▄ ▄▄▄▄▀ ▄▄   ▄ ▄ ▄      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █▀▄▀▀ ▄▀█▀▀▀▀█▀▄▀▄▀▄█▀ █      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ █▀▀▄▄  █▀▀ ▀▄█ █▄ █ ▀█      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▄▄▄▄▄▄▄ █▄▄ ▀▄▀█ ▄ █ ▀▀█      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ▄▄▄ █ ▄ █▄█ ▄█▄▄▄█ █▄█      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  █ ███ █ █▀▄▀ ▀▄▀ █▄▀█▀▄█      ${NC}${PAD}${BCYAN}║${NC}"
+            echo -e "${BCYAN}║${NC}${PAD}${BBLUE}  ▀▀▀▀▀▀▀ ▀   ▀  ▀   ▀   ▀      ${NC}${PAD}${BCYAN}║${NC}"
             echo -e "${BCYAN}║${NC}                                                    ${BCYAN}║${NC}"
-            
-            # Wallet Address Centering:
-            # Box width = 52. Address = 48. Padding = (52-48)/2 = 2 spaces.
             echo -e "${BCYAN}║${NC}  ${GREEN}UQAykVgirxEyv8cgHAgpPGXwzUYFwviRZWS1QMGwx3KDHrsV${NC}  ${BCYAN}║${NC}"
             echo -e "${BCYAN}╚════════════════════════════════════════════════════╝${NC}"
             echo ""
